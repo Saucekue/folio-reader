@@ -1,0 +1,8 @@
+/.build-tools/
+/target/
+/dist/
+/reading-state.json
+/reading-state.*.tmp
+/Books/
+/Covers/
+*.[eE][pP][uU][bB]

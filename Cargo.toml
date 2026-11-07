@@ -1,0 +1,22 @@
+[package]
+name = "folio-reader"
+version = "1.9.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22"
+roxmltree = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows-core = { version = "0.100", default-features = false, features = ["std"] }
+windows-webview = "0.100"
+windows-window = "0.100"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Controls_Dialogs", "Win32_UI_WindowsAndMessaging"] }
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = "s"
+debug = false
+strip = "symbols"
+panic = "abort"
+incremental = false
