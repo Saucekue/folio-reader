@@ -180,6 +180,9 @@ const folderDialog = $("folder-dialog");
 const folderImageEditor = $("folder-image-editor");
 const deleteFolderDialog = $("delete-folder-dialog");
 const chapterDialog = $("chapter-dialog");
+const chapterMenu = $("chapter-menu");
+let chapterMenuIndex = null;
+const bookmarkRequests = new Set();
 let folderBusy = false;
 let editFolderName = null;
 let folderImageChange = "keep";
@@ -792,8 +795,10 @@ function setView(reading) {
   $("library").hidden = reading;
   $("reader").hidden = !reading;
   $("brand").hidden = reading;
-  for (const id of ["library-back", "sidebar-toggle", "fullscreen", "reading-title", "toolbar-chapters"]) $(id).hidden = !reading;
+  for (const id of ["library-back", "sidebar-toggle", "fullscreen", "reading-title", "toolbar-chapters", "chapter-bookmark"]) $(id).hidden = !reading;
   $("toolbar-previous-chapter").disabled = $("toolbar-next-chapter").disabled = true;
+  updateBookmarkButton();
+  closeChapterMenu();
   $("drop-overlay").hidden = true;
   showTagPicker(false);
   showSettings(false);
@@ -812,6 +817,7 @@ async function setFullscreen(enabled) {
   try {
     await call("fullscreen", {enabled});
     fullscreen = enabled;
+    closeChapterMenu();
     showSettings(false);
     document.body.classList.toggle("full-reader", fullscreen);
     $("fullscreen").title = fullscreen ? "Exit full reader view (F11 or Esc)" : "Full reader view (F11)";
@@ -929,33 +935,99 @@ function calculateChapterNumbers() {
 function chapterList(scrollActive = false) {
   if (!book) return;
   const query = $("chapter-filter").value.trim().toLowerCase();
+  const bookmarksOnly = ["bookmark", "bookmarks", "bookmarked"].includes(query);
   const number = query.match(/^(?:chapter\s*|#\s*)?0*(\d+)$/i)?.[1];
   const fragment = document.createDocumentFragment();
   let visible = 0;
   book.sections.forEach((section, index) => {
     const shownNumber = chapterNumbers[index];
-    if (number !== undefined ? Number(number) !== shownNumber : !section.title.toLowerCase().includes(query)) return;
+    const bookmarked = book.bookmarks.has(index);
+    if (bookmarksOnly ? !bookmarked : number !== undefined ? Number(number) !== shownNumber : !section.title.toLowerCase().includes(query)) return;
     visible++;
     const button = document.createElement("button");
     button.className = "chapter-row";
     button.dataset.index = index;
+    button.setAttribute("aria-keyshortcuts", "Shift+F10");
     const ordinal = document.createElement("span");
     ordinal.className = "ordinal";
     ordinal.textContent = shownNumber === null ? "" : String(shownNumber).padStart(2, "0");
-    if (shownNumber === null) button.title = "Unnumbered · right-click to count as a chapter";
     const label = document.createElement("span");
+    label.className = "chapter-label";
     label.textContent = section.title;
     button.append(ordinal, label);
+    if (bookmarked) {
+      button.insertAdjacentHTML("beforeend", '<svg class="bookmark-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/></svg><span class="sr-only">Bookmarked</span>');
+    }
     if (index === chapter) button.setAttribute("aria-current", "location");
     fragment.append(button);
   });
   $("chapters").replaceChildren(fragment);
   const unnumbered = book.sections.length - chapterTotal;
-  $("chapter-count").textContent = query
-    ? visible + " of " + book.sections.length + " entries"
-    : chapterTotal + (chapterTotal === 1 ? " chapter" : " chapters") +
-      (unnumbered ? " · " + unnumbered + " unnumbered" : "");
+  $("chapter-count").textContent = bookmarksOnly ? visible + (visible === 1 ? " bookmark" : " bookmarks")
+    : query ? visible + " of " + book.sections.length + " entries"
+      : chapterTotal + (chapterTotal === 1 ? " chapter" : " chapters") +
+        (unnumbered ? " · " + unnumbered + " unnumbered" : "");
   if (scrollActive) $("chapters").querySelector('[aria-current="location"]')?.scrollIntoView({block: "nearest"});
+}
+
+function focusChapterRow(index) {
+  ($("chapters").querySelector('[data-index="' + index + '"]') || $("chapter-filter")).focus({preventScroll: true});
+}
+
+function bookmarkAction(index) {
+  return book.bookmarks.has(index) ? "Remove bookmark" : "Bookmark chapter";
+}
+
+function updateBookmarkButton() {
+  const button = $("chapter-bookmark");
+  const active = book && chapter >= 0;
+  button.disabled = !active;
+  button.setAttribute("aria-pressed", Boolean(active && book.bookmarks.has(chapter)));
+  button.title = active ? bookmarkAction(chapter) : "Bookmark chapter";
+}
+
+async function toggleChapterBookmark(index) {
+  const target = book;
+  if (!target?.sections[index]) return;
+  const key = target.id + ":" + index;
+  if (bookmarkRequests.has(key)) return;
+  const bookmarked = !target.bookmarks.has(index);
+  bookmarkRequests.add(key);
+  try {
+    await call("set_bookmarked", {book_id: target.id, index, bookmarked});
+    if (bookmarked) target.bookmarks.add(index);
+    else target.bookmarks.delete(index);
+    if (book !== target) return;
+    const focused = document.activeElement?.closest(".chapter-row")?.dataset.index;
+    chapterList();
+    if (focused !== undefined) focusChapterRow(focused);
+    if (chapterMenuIndex === index) $("menu-bookmark").textContent = bookmarkAction(index);
+    updateBookmarkButton();
+  } catch (error) { notice(error.message); }
+  finally { bookmarkRequests.delete(key); }
+}
+
+function openChapterMenu(row, x, y) {
+  const index = Number(row.dataset.index);
+  if (!book?.sections[index] || chapterDialog.open) return;
+  chapterMenuIndex = index;
+  $("menu-bookmark").textContent = bookmarkAction(index);
+  $("menu-numbering").textContent = chapterNumbers[index] === null ? "Count as chapter" : "Mark as non-chapter";
+  showSettings(false);
+  const rowBounds = row.getBoundingClientRect();
+  chapterMenu.hidden = false;
+  const bounds = chapterMenu.getBoundingClientRect();
+  chapterMenu.style.left = clamp(x ?? rowBounds.left + 12, 6, Math.max(6, window.innerWidth - bounds.width - 6)) + "px";
+  chapterMenu.style.top = clamp(y ?? rowBounds.bottom, 6, Math.max(6, window.innerHeight - bounds.height - 6)) + "px";
+  $("menu-bookmark").focus({preventScroll: true});
+}
+
+function closeChapterMenu(restoreFocus = false) {
+  if (chapterMenu.hidden) return;
+  const index = chapterMenuIndex;
+  chapterMenu.hidden = true;
+  chapterMenuIndex = null;
+  if (restoreFocus) focusChapterRow(index);
 }
 
 function openChapterEditor(index) {
@@ -963,6 +1035,7 @@ function openChapterEditor(index) {
   const numbered = chapterNumbers[index] === null;
   chapterEdit = {book_id: book.id, index, numbered};
   $("chapter-dialog-title").textContent = book.sections[index].title;
+  $("chapter-dialog-question").textContent = numbered ? "Count this entry as a chapter?" : "Mark this entry as a non-chapter?";
   $("toggle-chapter-number").textContent = numbered ? "Count as chapter" : "Mark as non-chapter";
   showError("chapter-dialog-error");
   chapterDialog.showModal();
@@ -980,7 +1053,7 @@ async function saveChapterNumber() {
     chapterDialog.close();
     chapterList();
     updateFooter();
-    ($("chapters").querySelector('[data-index="' + index + '"]') || $("chapter-filter")).focus({preventScroll: true});
+    focusChapterRow(index);
   } catch (error) { showError("chapter-dialog-error", error.message); }
   finally {
     chapterEditBusy = false;
@@ -991,6 +1064,7 @@ async function saveChapterNumber() {
 async function useBook(next) {
   ++loadToken;
   book = next;
+  book.bookmarks = new Set(next.bookmarks || []);
   calculateChapterNumbers();
   chapter = -1;
   content.replaceChildren();
@@ -1012,6 +1086,7 @@ async function useBook(next) {
 
 async function loadChapter(index, position = {offset: 0, fraction: 0}, fragment = null) {
   if (!book?.sections[index]) return;
+  closeChapterMenu();
   if (chapter >= 0 && index !== chapter) {
     anchor = readPosition();
     persist();
@@ -1027,6 +1102,7 @@ async function loadChapter(index, position = {offset: 0, fraction: 0}, fragment 
     content.replaceChildren(clean);
     indexText();
     chapter = index;
+    updateBookmarkButton();
     $("reader-loading").hidden = true;
     viewport.hidden = false;
     $("previous-chapter").disabled = $("toolbar-previous-chapter").disabled = index === 0;
@@ -1518,7 +1594,10 @@ $("library-back").addEventListener("click", returnLibrary);
 $("settings-toggle").addEventListener("click", () => showSettings($("reading-settings").hidden));
 $("fullscreen").addEventListener("click", () => setFullscreen(!fullscreen));
 $("exit-fullscreen").addEventListener("click", () => setFullscreen(false));
-$("sidebar-toggle").addEventListener("click", () => applySettings({sidebar: !settings.sidebar}));
+$("sidebar-toggle").addEventListener("click", () => {
+  closeChapterMenu();
+  applySettings({sidebar: !settings.sidebar});
+});
 $("light-mode").addEventListener("click", () => applySettings({theme: "light"}));
 $("dark-mode").addEventListener("click", () => applySettings({theme: "dark"}));
 $("black-mode").addEventListener("click", () => applySettings({theme: "black"}));
@@ -1533,7 +1612,10 @@ $("smaller").addEventListener("click", () => applySettings({size: settings.size 
 $("larger").addEventListener("click", () => applySettings({size: settings.size + 1}));
 $("scroll-mode").addEventListener("click", () => applySettings({mode: "scroll"}));
 $("spread-mode").addEventListener("click", () => applySettings({mode: "spread"}));
-$("chapter-filter").addEventListener("input", () => chapterList());
+$("chapter-filter").addEventListener("input", () => {
+  closeChapterMenu();
+  chapterList();
+});
 $("chapters").addEventListener("click", event => {
   const button = event.target.closest("[data-index]");
   if (button) loadChapter(Number(button.dataset.index));
@@ -1542,8 +1624,39 @@ $("chapters").addEventListener("contextmenu", event => {
   const button = event.target.closest(".chapter-row");
   if (!button) return;
   event.preventDefault();
-  openChapterEditor(Number(button.dataset.index));
+  if (event.clientX || event.clientY) openChapterMenu(button, event.clientX, event.clientY);
+  else openChapterMenu(button);
 });
+$("chapters").addEventListener("keydown", event => {
+  const button = event.target.closest(".chapter-row");
+  if (!button || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+  event.preventDefault();
+  openChapterMenu(button);
+});
+$("chapters").addEventListener("scroll", () => closeChapterMenu());
+chapterMenu.addEventListener("contextmenu", event => event.preventDefault());
+chapterMenu.addEventListener("keydown", event => {
+  const {key} = event;
+  if (key === "Escape" || key === "Tab") {
+    if (key === "Escape") event.preventDefault();
+    closeChapterMenu(true);
+  } else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(key)) {
+    event.preventDefault();
+    const first = key === "Home" || (key !== "End" && event.target.id === "menu-numbering");
+    $(first ? "menu-bookmark" : "menu-numbering").focus({preventScroll: true});
+  }
+});
+$("menu-bookmark").addEventListener("click", () => {
+  const index = chapterMenuIndex;
+  closeChapterMenu(true);
+  toggleChapterBookmark(index);
+});
+$("menu-numbering").addEventListener("click", () => {
+  const index = chapterMenuIndex;
+  closeChapterMenu(true);
+  openChapterEditor(index);
+});
+$("chapter-bookmark").addEventListener("click", () => toggleChapterBookmark(chapter));
 $("toggle-chapter-number").addEventListener("click", saveChapterNumber);
 $("cancel-chapter-edit").addEventListener("click", () => chapterDialog.close());
 chapterDialog.addEventListener("cancel", event => { if (chapterEditBusy) event.preventDefault(); });
@@ -1581,7 +1694,7 @@ content.addEventListener("click", event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (editor.open || folderDialog.open || folderImageEditor.open || chapterDialog.open || presetEditor.open) return;
+  if (event.defaultPrevented || !chapterMenu.hidden || editor.open || folderDialog.open || folderImageEditor.open || chapterDialog.open || presetEditor.open) return;
   if (event.ctrlKey && ["f", "o"].includes(event.key.toLowerCase())) {
     event.preventDefault();
     if (event.key.toLowerCase() === "f") openFind();
@@ -1617,6 +1730,9 @@ document.addEventListener("click", event => {
   if (!event.target.closest("#settings-toggle, #reading-settings")) showSettings(false);
   if (!$("library-tag-panel").hidden && !event.target.closest("#library-tag-toggle, #library-tag-panel")) showTagPicker(false);
 });
+document.addEventListener("pointerdown", event => {
+  if (!chapterMenu.hidden && !chapterMenu.contains(event.target)) closeChapterMenu();
+});
 document.addEventListener("dragover", event => {
   if (!event.dataTransfer.types.includes("Files")) return;
   event.preventDefault();
@@ -1651,7 +1767,9 @@ viewport.addEventListener("scrollend", () => {
   persist();
 });
 new ResizeObserver(queueLayout).observe(viewport);
+window.addEventListener("resize", () => closeChapterMenu());
 window.addEventListener("blur", () => {
+  closeChapterMenu();
   if (chapter >= 0) anchor = readPosition();
   persist();
 });

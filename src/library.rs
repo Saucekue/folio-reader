@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet}, env, fs::{self, File, OpenOptions}, io::{self, Read, Write},
+    collections::{BTreeSet, HashMap, HashSet}, env, fs::{self, File, OpenOptions}, io::{self, Read, Write},
     path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -57,6 +57,7 @@ struct BookEdits {
     tags: Vec<String>,
     archived: bool,
     numbering: HashMap<usize, bool>,
+    bookmarks: BTreeSet<usize>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -196,6 +197,7 @@ pub enum Request {
     SetFolderImage { name: String, change: CoverEdit },
     DeleteFolder { name: String },
     SetNumbered { book_id: String, index: usize, numbered: bool },
+    SetBookmarked { book_id: String, index: usize, bookmarked: bool },
     Chapter { book_id: String, index: usize },
     Image { book_id: String, path: String },
     Fullscreen { enabled: bool },
@@ -274,6 +276,7 @@ impl Reader {
             "id": book.id, "title": entry.map_or(book.title.as_str(), LibraryEntry::title),
             "author": entry.map_or(book.author.as_str(), LibraryEntry::author),
             "sections": book.sections, "position": position, "numbering": entry.map(|entry| &entry.edits.numbering),
+            "bookmarks": entry.map(|entry| &entry.edits.bookmarks),
         });
         self.book = Some(book);
         response
@@ -352,6 +355,7 @@ impl Reader {
             tags,
             archived,
             numbering: old.numbering.clone(),
+            bookmarks: old.bookmarks.clone(),
         };
         if let Err(error) = self.save() {
             self.state.library[index].edits = old;
@@ -457,6 +461,20 @@ impl Reader {
             return Err(error);
         }
         Ok(json!(self.entry(id)?.edits.numbering))
+    }
+
+    fn set_bookmarked(&mut self, id: &str, index: usize, bookmarked: bool) -> Result<Value> {
+        self.current(id)?.sections.get(index).ok_or("Chapter is outside the reading order.")?;
+        let entry = self.state.library.iter().position(|entry| entry.id == id).ok_or("Book is outside the library.")?;
+        let bookmarks = &mut self.state.library[entry].edits.bookmarks;
+        let changed = if bookmarked { bookmarks.insert(index) } else { bookmarks.remove(&index) };
+        if changed && let Err(error) = self.save() {
+            let bookmarks = &mut self.state.library[entry].edits.bookmarks;
+            if bookmarked { bookmarks.remove(&index); }
+            else { bookmarks.insert(index); }
+            return Err(error);
+        }
+        Ok(Value::Null)
     }
 
     fn remove_book(&mut self, id: &str) -> Result<Value> {
@@ -608,6 +626,7 @@ impl Reader {
             Request::SetFolderImage { name, change } => self.set_folder_image(&name, change),
             Request::DeleteFolder { name } => self.delete_folder(&name),
             Request::SetNumbered { book_id, index, numbered } => self.set_numbered(&book_id, index, numbered),
+            Request::SetBookmarked { book_id, index, bookmarked } => self.set_bookmarked(&book_id, index, bookmarked),
             Request::Chapter { book_id, index } => Ok(json!(self.current(&book_id)?.chapter(index)?)),
             Request::Image { book_id, path } => Ok(json!(self.current(&book_id)?.image(&path)?)),
             Request::Save { book_id, position, settings } => {
@@ -792,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn numbering_and_removal_preserve_the_source_and_reading_position() -> Result<()> {
+    fn numbering_bookmarks_and_removal_preserve_the_source_and_reading_position() -> Result<()> {
         use zip::{ZipWriter, write::SimpleFileOptions};
         let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let dir = env::temp_dir().join(format!("folio-remove-{}-{time}", std::process::id()));
@@ -835,6 +854,12 @@ mod tests {
         assert_eq!(opened["sections"][0]["front_matter"], true);
         assert_eq!(opened["sections"][1]["front_matter"], true);
         assert_eq!(opened["sections"][2]["front_matter"], false);
+        assert_eq!(opened["bookmarks"], json!([]));
+        reader.handle(Request::SetBookmarked { book_id: id.clone(), index: 0, bookmarked: true }, Vec::new())?;
+        reader.set_bookmarked(&id, 0, true)?;
+        reader.set_bookmarked(&id, 3, true)?;
+        assert!(reader.set_bookmarked(&id, 4, true).is_err());
+        reader.edit_book(&id, details(CoverEdit::Keep))?;
         assert_eq!(reader.set_numbered(&id, 0, true)?["0"], true);
         assert_eq!(reader.set_numbered(&id, 3, false)?["3"], false);
         assert!(reader.remove_book(&id).is_err());
@@ -847,8 +872,15 @@ mod tests {
         let mut reader = Reader::new(state.clone());
         let opened = reader.handle(Request::OpenBook { book_id: id.clone() }, Vec::new())?;
         assert_eq!(opened["numbering"], json!({"0": true, "3": false}));
+        assert_eq!(opened["bookmarks"], json!([0, 3]));
         assert_eq!(reader.catalog()[0]["resume_number"], 2);
+        reader.set_bookmarked(&id, 3, false)?;
         assert_eq!(reader.set_numbered(&id, 0, false)?, json!({"3": false}));
+        reader.handle(Request::CloseBook, Vec::new())?;
+        drop(reader);
+        let mut reader = Reader::new(state.clone());
+        let opened = reader.handle(Request::OpenBook { book_id: id.clone() }, Vec::new())?;
+        assert_eq!(opened["bookmarks"], json!([0]));
         reader.handle(Request::CloseBook, Vec::new())?;
         assert_eq!(reader.remove_book(&id)?["library"], json!([]));
         assert!(!imported.exists());

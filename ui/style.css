@@ -68,6 +68,8 @@ svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width:
 .toolbar-end { grid-column: 3; }
 #toolbar-chapters { display: flex; align-items: center; gap: 4px; }
 #toolbar-chapters button { display: flex; align-items: center; gap: 4px; padding-inline: 7px; }
+#chapter-bookmark[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+#chapter-bookmark[aria-pressed="true"] svg { fill: currentColor; }
 .leave-fullscreen-icon, .full-reader .enter-fullscreen-icon { display: none; }
 .full-reader .leave-fullscreen-icon { display: inline; }
 .icon-button { padding: 7px; width: 36px; height: 36px; display: grid; place-items: center; }
@@ -209,9 +211,14 @@ select { max-width: 132px; background: var(--paper); border: 1px solid var(--lin
 .chapter-hint { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
 .chapter-filter input, .findbar input { min-width: 0; width: 100%; border: 0; padding: 2px; background: transparent; color: var(--ink); }
 #chapters { flex: 1; overflow: auto; padding: 2px 8px 8px; }
-.chapter-row { display: flex; width: 100%; align-items: baseline; text-align: left; gap: 10px; padding: 9px; white-space: normal; overflow-wrap: anywhere; }
+.chapter-row { position: relative; display: flex; width: 100%; align-items: baseline; text-align: left; gap: 10px; padding: 9px; white-space: normal; overflow-wrap: anywhere; }
 .chapter-row[aria-current="location"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 .chapter-row .ordinal { flex: none; min-width: 28px; color: var(--muted); font: 12px/1.3 "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+.chapter-row .chapter-label { flex: 1; min-width: 0; }
+.chapter-row .bookmark-mark { position: absolute; inset-block-start: -3px; inset-inline-start: 31px; width: 16px; height: 16px; color: var(--accent); fill: currentColor; pointer-events: none; }
+#chapter-menu { position: fixed; z-index: 5; display: grid; width: max-content; max-width: calc(100vw - 12px); padding: 4px; background: var(--side); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px #0004; }
+#chapter-menu button { padding: 6px 10px; text-align: left; white-space: normal; }
+#chapter-menu button:focus-visible { background: var(--accent-soft); outline-offset: -2px; }
 .chapter-count { padding: 9px 15px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 #stage { flex: 1; min-height: 0; position: relative; background: var(--paper); }

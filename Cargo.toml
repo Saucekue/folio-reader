@@ -1,6 +1,6 @@
 [package]
 name = "folio-reader"
-version = "1.9.1"
+version = "1.10.2"
 edition = "2024"
 
 [dependencies]

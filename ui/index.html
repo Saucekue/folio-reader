@@ -32,6 +32,9 @@
           <span>Next chapter</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
         </button>
       </nav>
+      <button id="chapter-bookmark" class="icon-button" title="Bookmark this chapter" aria-label="Bookmark current chapter" aria-pressed="false" hidden disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/></svg>
+      </button>
       <button id="fullscreen" class="icon-button" title="Full reader view (F11)" aria-label="Enter full reader view" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path class="enter-fullscreen-icon" d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/>
@@ -187,9 +190,9 @@
         <p id="book-author"></p>
         <label class="chapter-filter">
           <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>
-          <input id="chapter-filter" type="search" placeholder="Title or chapter number" aria-label="Filter chapters" disabled>
+          <input id="chapter-filter" type="search" placeholder="Title, number, or bookmark" aria-label="Filter chapters by title, number, or bookmark" disabled>
         </label>
-        <p class="chapter-hint">Right-click a row to change its numbering.</p>
+        <p class="chapter-hint">Right-click a chapter for bookmarks and numbering.</p>
       </div>
       <nav id="chapters" aria-label="Table of contents"></nav>
       <div id="chapter-count" class="chapter-count">Open an EPUB to see its chapters</div>
@@ -333,9 +336,14 @@
       </div>
     </form>
   </dialog>
+  <div id="chapter-menu" role="menu" aria-label="Chapter actions" hidden>
+    <button id="menu-bookmark" type="button" role="menuitem" tabindex="-1"></button>
+    <button id="menu-numbering" type="button" role="menuitem" tabindex="-1"></button>
+  </div>
   <dialog id="chapter-dialog" class="folio-dialog compact-dialog" aria-labelledby="chapter-dialog-heading">
     <h2 id="chapter-dialog-heading">Chapter numbering</h2>
     <p id="chapter-dialog-title"></p>
+    <p id="chapter-dialog-question"></p>
     <p id="chapter-dialog-error" class="dialog-error" role="alert" hidden></p>
     <div class="edit-actions">
       <button id="cancel-chapter-edit" autofocus>Cancel</button>
