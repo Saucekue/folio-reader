@@ -13,14 +13,17 @@ use book::Result;
 use library::{Reader, Request};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use windows_sys::Win32::UI::{
+use windows_sys::Win32::{Foundation::E_NOINTERFACE, UI::{
     Controls::Dialogs::{
         CommDlgExtendedError, GetOpenFileNameW, OPENFILENAMEW, OFN_ALLOWMULTISELECT, OFN_EXPLORER,
         OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
     },
-    WindowsAndMessaging::{MB_ICONERROR, MessageBoxW, WM_SETFOCUS},
+    WindowsAndMessaging::{MB_ICONERROR, MessageBoxW, WM_ERASEBKGND, WM_SETFOCUS},
+}};
+use windows_webview::{
+    Controller, ControllerOptions, Environment, EnvironmentOptions, MoveFocusReason,
+    PreferredColorScheme, WebView,
 };
-use windows_webview::{Controller, Environment, EnvironmentOptions, MoveFocusReason, WebView};
 use windows_window::Window;
 use window::Fullscreen;
 
@@ -56,12 +59,19 @@ fn pick_files(owner: *mut c_void, title: &str, filter: &str, multiple: bool) -> 
 
 fn run() -> Result<()> {
     let state_file = env::current_exe()?.with_file_name("reading-state.json");
+    let reader = RefCell::new(Reader::new(state_file));
+    let initial_theme = reader.borrow().theme();
+    let theme = Rc::new(Cell::new(initial_theme));
     let browser_data = env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(env::temp_dir)
         .join("FolioReader").join("WebView");
     let holder: Rc<RefCell<Option<Controller>>> = Rc::new(RefCell::new(None));
     let resize = holder.clone();
     let focus = holder.clone();
-    let window = Window::new("Folio Reader").size(1190, 820).on_message(move |_, message, _, _| {
+    let paint_theme = theme.clone();
+    let window = Window::new("Folio Reader").size(1190, 820).on_message(move |hwnd, message, wparam, _| {
+        if message == WM_ERASEBKGND {
+            return window::paint_background(hwnd, wparam as _, window::background_color(paint_theme.get()));
+        }
         if message == WM_SETFOCUS && let Some(controller) = focus.borrow().as_ref() {
             let _ = controller.move_focus(MoveFocusReason::Programmatic);
         }
@@ -74,19 +84,28 @@ fn run() -> Result<()> {
     window::set_icon(window.hwnd());
     let env = Environment::with_options(&EnvironmentOptions::new().user_data_folder(browser_data.to_string_lossy()))
         .map_err(|error| format!("Folio needs the Windows WebView2 Runtime. {error}"))?;
-    let controller = env.create_controller(&window)?;
+    let color = window::background_color(initial_theme);
+    let options = ControllerOptions::new().default_background_color(color);
+    let controller = match env.create_controller_with_options(&window, &options) {
+        Err(error) if error.code().0 == E_NOINTERFACE => {
+            let controller = env.create_controller(&window)?;
+            let _ = controller.set_default_background_color(color);
+            controller
+        }
+        result => result?,
+    };
     let (width, height) = window.client_size();
     controller.set_bounds(0, 0, width, height)?;
     controller.set_visible(true)?;
     controller.set_allow_external_drop(true)?;
     let webview = Rc::new(controller.webview()?);
+    set_browser_theme(&webview, initial_theme);
     controller.move_focus(MoveFocusReason::Programmatic)?;
     *holder.borrow_mut() = Some(controller);
     let settings = webview.settings()?;
     settings.set_dev_tools_enabled(false)?;
     settings.set_browser_accelerator_keys_enabled(false)?;
 
-    let reader = RefCell::new(Reader::new(state_file));
     let fullscreen = RefCell::new(Fullscreen::default());
     let owner = window.hwnd();
     let send = Rc::downgrade(&webview);
@@ -94,6 +113,13 @@ fn run() -> Result<()> {
         if args.source() != "about:blank" { return; }
         if let Some(webview) = send.upgrade() {
             respond(&webview, &reader, &fullscreen, owner, &args.web_message_as_json());
+            let saved_theme = reader.borrow().theme();
+            if theme.replace(saved_theme) != saved_theme {
+                if let Some(controller) = holder.borrow().as_ref() {
+                    let _ = controller.set_default_background_color(window::background_color(saved_theme));
+                }
+                set_browser_theme(&webview, saved_theme);
+            }
         }
     })?;
     let first_navigation = Cell::new(true);
@@ -105,11 +131,19 @@ fn run() -> Result<()> {
     })?;
     let _popups = webview.on_new_window_requested(|args| { let _ = args.set_handled(true); })?;
     let html = include_str!("../ui/index.html")
+        .replacen("data-theme=\"dark\"", &format!("data-theme=\"{initial_theme}\""), 1)
         .replace("/* FOLIO_CSS */", include_str!("../ui/style.css"))
         .replace("/* FOLIO_JS */", include_str!("../ui/reader.js"));
     webview.navigate_to_string(&html)?;
     windows_window::run();
     Ok(())
+}
+
+fn set_browser_theme(webview: &WebView, theme: &str) {
+    if let Ok(profile) = webview.profile() {
+        let scheme = if theme == "light" { PreferredColorScheme::Light } else { PreferredColorScheme::Dark };
+        let _ = profile.set_preferred_color_scheme(scheme);
+    }
 }
 
 fn respond(

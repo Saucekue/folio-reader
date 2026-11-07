@@ -1,19 +1,45 @@
 use std::{io, mem::size_of};
 
 use windows_sys::Win32::{
-    Foundation::HWND,
-    Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow},
+    Foundation::{HWND, RECT},
+    Graphics::Gdi::{
+        DC_BRUSH, FillRect, GetMonitorInfoW, GetStockObject, HDC, MONITOR_DEFAULTTONEAREST,
+        MONITORINFO, MonitorFromWindow, SetDCBrushColor,
+    },
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
-        GWL_STYLE, GetSystemMetrics, GetWindowLongW, GetWindowPlacement, HWND_TOP, ICON_BIG,
+        GWL_STYLE, GetClientRect, GetSystemMetrics, GetWindowLongW, GetWindowPlacement, HWND_TOP, ICON_BIG,
         ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SM_CYICON,
         SM_CYSMICON, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
         SendMessageW, SetWindowLongW, SetWindowPlacement, SetWindowPos, WINDOWPLACEMENT, WM_SETICON,
         WS_OVERLAPPEDWINDOW,
     },
 };
+use windows_webview::Color;
 
 use crate::book::Result;
+
+pub fn background_color(theme: &str) -> Color {
+    // Match the surface colors in the reader stylesheet.
+    let (r, g, b) = match theme {
+        "light" => (0xf7, 0xf4, 0xee),
+        "black" => (0x08, 0x07, 0x09),
+        _ => (0x24, 0x23, 0x26),
+    };
+    Color { r, g, b, a: 255 }
+}
+
+pub fn paint_background(window: HWND, dc: HDC, color: Color) -> Option<isize> {
+    let mut rect = RECT::default();
+    let rgb = u32::from_le_bytes([color.r, color.g, color.b, 0]);
+    unsafe {
+        if GetClientRect(window, &mut rect) == 0 { return None; }
+        let previous = SetDCBrushColor(dc, rgb);
+        let painted = FillRect(dc, &rect, GetStockObject(DC_BRUSH));
+        SetDCBrushColor(dc, previous);
+        (painted != 0).then_some(1)
+    }
+}
 
 pub fn set_icon(window: HWND) {
     unsafe {

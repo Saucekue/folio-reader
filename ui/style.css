@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  background: var(--surface);
   --paper: #fffcf6;
   --surface: #f7f4ee;
   --side: #f2eee7;

@@ -209,6 +209,14 @@ impl Reader {
         Self { state_file, state, book: None, startup_book: env::args_os().nth(1).map(PathBuf::from), dropped: None, pending_cover: None }
     }
 
+    pub fn theme(&self) -> &'static str {
+        match self.state.settings["theme"].as_str() {
+            Some("light") => "light",
+            Some("black") => "black",
+            _ => "dark",
+        }
+    }
+
     fn dir(&self) -> &Path {
         self.state_file.parent().expect("state file lives beside executable")
     }
