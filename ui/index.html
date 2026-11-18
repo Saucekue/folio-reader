@@ -199,12 +199,15 @@
     </aside>
     <main>
       <div id="find" class="findbar" hidden>
-        <input id="query" type="search" placeholder="Find in this chapter" aria-label="Find in this chapter">
+        <input id="query" type="search" placeholder="Find in this chapter" aria-label="Find in this chapter" title="Right-click to add this search to the list">
         <span id="match-count" role="status"></span>
         <button id="prev-match" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
         <button id="next-match" title="Next match (Enter)" aria-label="Next match">↓</button>
         <button id="lock-find" title="Keep the search active when the find bar is closed" aria-pressed="false">Lock</button>
         <button id="close-find" title="Close find (Esc)" aria-label="Close find">×</button>
+        <div id="find-terms" aria-label="Added searches"></div>
+        <button id="find-more-terms" type="button" aria-controls="find-terms" hidden></button>
+        <input id="find-color" type="color" value="#7f7f7f" tabindex="-1" aria-hidden="true">
       </div>
       <div id="stage">
         <p id="reader-loading" role="status" hidden>Loading chapter…</p>
@@ -339,6 +342,13 @@
   <div id="chapter-menu" role="menu" aria-label="Chapter actions" hidden>
     <button id="menu-bookmark" type="button" role="menuitem" tabindex="-1"></button>
     <button id="menu-numbering" type="button" role="menuitem" tabindex="-1"></button>
+  </div>
+  <div id="find-menu" role="menu" aria-label="Find actions" hidden>
+    <button id="menu-add-search" type="button" role="menuitem" tabindex="-1">Add Search</button>
+    <button id="menu-add-search-color" type="button" role="menuitem" tabindex="-1" aria-haspopup="true">Add Search custom color <span aria-hidden="true">›</span></button>
+    <div id="find-colors" role="group" aria-label="Highlight color" hidden>
+      <button id="find-more-colors" class="find-more" type="button">More colors…</button>
+    </div>
   </div>
   <dialog id="chapter-dialog" class="folio-dialog compact-dialog" aria-labelledby="chapter-dialog-heading">
     <h2 id="chapter-dialog-heading">Chapter numbering</h2>

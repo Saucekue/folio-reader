@@ -59,6 +59,12 @@ let runOffsets = new WeakMap();
 let plain = "";
 let matches = [];
 let currentMatch = -1;
+const findTerms = [];
+let findSlots = 0;
+let findTermsExpanded = false;
+let findTermsWidth = 0;
+const findPalette = ["Blue", "Green", "Pink", "Purple", "Teal", "Orange", "Red", "Grey"];
+let pendingColorText = "";
 let markerFrame = 0;
 let layoutFrame = 0;
 let scrollFrame = 0;
@@ -1112,7 +1118,7 @@ async function loadChapter(index, position = {offset: 0, fraction: 0}, fragment 
     if (fragment) jumpTo(elementAt(content, fragment));
     chapterList(true);
     if ($("find").hidden) viewport.focus({preventScroll: true});
-    if (!$("find").hidden || $("query").value) refreshFind(false);
+    if (!$("find").hidden || $("query").value || findTerms.length) refreshFind(false);
     persist();
     const images = Array.from(content.querySelectorAll("img[data-epub-src]")).slice(0, 100);
     for (const image of images) {
@@ -1368,6 +1374,7 @@ function turn(delta) {
 function clearHighlights() {
   CSS.highlights.delete("folio-matches");
   CSS.highlights.delete("folio-active");
+  for (let slot = 0; slot < findSlots; slot++) CSS.highlights.delete("folio-term-" + slot);
 }
 
 function searchMarkerAxis() {
@@ -1412,31 +1419,216 @@ function queueSearchMarkers() {
   });
 }
 
+function findExpression(text) {
+  const pattern = text.split(/\s+/u).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  return new RegExp(pattern, "giu");
+}
+
+function sameFindText(a, b) {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 function refreshFind(jump = true) {
   clearHighlights();
   matches = [];
   currentMatch = -1;
   const query = $("query").value.trim();
-  if (query) {
-    const pattern = query.split(/\s+/u).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-    const expression = new RegExp(pattern, "giu");
-    for (const result of plain.matchAll(expression)) {
-      const range = rangeAt(result.index, result.index + result[0].length);
-      if (range) matches.push(range);
-    }
+  const searches = findTerms.map(term => ({term, text: term.text, name: "folio-term-" + term.slot}));
+  if (query && !findTerms.some(term => sameFindText(term.text, query))) searches.push({text: query, name: "folio-matches", typed: true});
+  const found = new Map();
+  for (const search of searches) {
     const highlight = new Highlight();
-    for (const range of matches) highlight.add(range);
-    CSS.highlights.set("folio-matches", highlight);
+    let count = 0;
+    for (const result of plain.matchAll(findExpression(search.text))) {
+      const range = rangeAt(result.index, result.index + result[0].length);
+      if (!range) continue;
+      count++;
+      highlight.add(range);
+      const key = result.index + ":" + result[0].length;
+      if (!found.has(key)) found.set(key, {range, start: result.index, typed: search.typed});
+    }
+    CSS.highlights.set(search.name, highlight);
+    if (search.term) search.term.count = count;
   }
-  if (matches.length && jump) selectMatch(0);
+  const ordered = [...found.values()].sort((a, b) => a.start - b.start);
+  matches = ordered.map(match => match.range);
+  updateFindTermCounts();
+  const firstTyped = ordered.findIndex(match => match.typed);
+  if (jump && firstTyped >= 0) selectMatch(firstTyped);
   else matchLabel(query);
   queueSearchMarkers();
 }
 
+function updateFindTermCounts() {
+  for (const chip of $("find-terms").children) {
+    const term = findTerms.find(item => item.slot === Number(chip.dataset.slot));
+    if (term) chip.querySelector("small").textContent = term.count ?? "";
+  }
+  layoutFindTerms();
+}
+
+function layoutFindTerms() {
+  const box = $("find-terms");
+  const toggle = $("find-more-terms");
+  const chips = [...box.children];
+  box.classList.remove("collapsed");
+  const width = findTermsWidth = box.clientWidth;
+  if (!width || !chips.length) {
+    toggle.hidden = true;
+    return;
+  }
+  const gap = 5;
+  const rows = [];
+  chips.forEach((chip, index) => {
+    const size = chip.getBoundingClientRect().width + gap;
+    let row = rows.findIndex(free => free + 0.5 >= size);
+    if (row < 0) row = rows.push(width + gap) - 1;
+    rows[row] -= size;
+    chip.style.order = row * 1000 + index;
+    chip.classList.toggle("extra-row", row > 0);
+  });
+  const extra = chips.filter(chip => chip.classList.contains("extra-row")).length;
+  if (!extra) findTermsExpanded = false;
+  toggle.hidden = !extra;
+  toggle.textContent = findTermsExpanded ? "Less ▴" : extra + " more ▾";
+  toggle.title = findTermsExpanded ? "Show only the first row of searches" : "Show all added searches";
+  toggle.setAttribute("aria-expanded", findTermsExpanded);
+  box.classList.toggle("collapsed", !findTermsExpanded);
+}
+
+function inkFor(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return 0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255) > 150 ? "#1b1b1b" : "#f5f5f5";
+}
+
+function applyFindTermColor(term) {
+  document.documentElement.style.setProperty("--term-" + term.slot, term.color);
+  document.documentElement.style.setProperty("--term-ink-" + term.slot, term.ink);
+}
+
+function renderFindTerms(fresh = null) {
+  const chips = document.createDocumentFragment();
+  for (const term of findTerms) {
+    const chip = document.createElement("div");
+    chip.className = term === fresh ? "find-term fresh" : "find-term";
+    chip.addEventListener("animationend", () => chip.classList.remove("fresh"), {once: true});
+    chip.dataset.slot = term.slot;
+    chip.title = term.text;
+    const swatch = document.createElement("i");
+    swatch.style.background = term.color;
+    const label = document.createElement("b");
+    label.textContent = term.text;
+    const count = document.createElement("small");
+    count.textContent = term.count ?? "";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = "Remove this search";
+    remove.setAttribute("aria-label", "Remove search " + term.text);
+    remove.addEventListener("click", () => removeFindTerm(term));
+    chip.append(swatch, label, count, remove);
+    chips.append(chip);
+  }
+  $("find-terms").replaceChildren(chips);
+  layoutFindTerms();
+}
+
+function addFindTerm(color = "var(--mark)") {
+  const text = $("query").value.trim();
+  if (!text) return;
+  const ink = color.startsWith("#") ? inkFor(color) : "var(--ink)";
+  let term = findTerms.find(item => sameFindText(item.text, text));
+  if (term) {
+    term.color = color;
+    term.ink = ink;
+  } else {
+    const used = new Set(findTerms.map(item => item.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    ensureFindSlot(slot);
+    term = {text, slot, color, ink};
+    findTerms.push(term);
+  }
+  applyFindTermColor(term);
+  renderFindTerms(term);
+  clearTimeout(findTimer);
+  findTimer = 0;
+  $("query").value = "";
+  refreshFind(false);
+  $("query").focus({preventScroll: true});
+}
+
+function removeFindTerm(term) {
+  const index = findTerms.indexOf(term);
+  if (index < 0) return;
+  findTerms.splice(index, 1);
+  renderFindTerms();
+  refreshFind(false);
+  if (!$("find").hidden) $("query").focus({preventScroll: true});
+}
+
+const findMenu = $("find-menu");
+const findStyle = document.head.appendChild(document.createElement("style"));
+
+function ensureFindSlot(slot) {
+  for (; findSlots <= slot; findSlots++) {
+    findStyle.sheet.insertRule("::highlight(folio-term-" + findSlots + ") { color: var(--term-ink-" + findSlots + ", var(--ink)); background-color: var(--term-" + findSlots + ", var(--mark)); }", findStyle.sheet.cssRules.length);
+  }
+}
+
+function openFindMenu(x, y) {
+  const text = $("query").value.trim();
+  const add = $("menu-add-search");
+  add.disabled = $("menu-add-search-color").disabled = !text;
+  add.title = text ? "Highlight in yellow" : "Type something to search for first";
+  showFindColors(false);
+  closeChapterMenu();
+  showSettings(false);
+  const inputBounds = $("query").getBoundingClientRect();
+  findMenu.hidden = false;
+  const bounds = findMenu.getBoundingClientRect();
+  findMenu.style.left = clamp(x ?? inputBounds.left + 12, 6, Math.max(6, window.innerWidth - bounds.width - 6)) + "px";
+  findMenu.style.top = clamp(y ?? inputBounds.bottom, 6, Math.max(6, window.innerHeight - bounds.height - 6)) + "px";
+  if (x === undefined && !add.disabled) add.focus({preventScroll: true});
+}
+
+function showFindColors(show) {
+  const colors = $("find-colors");
+  const item = $("menu-add-search-color");
+  show &&= !item.disabled;
+  colors.hidden = !show;
+  item.classList.toggle("open", show);
+  item.setAttribute("aria-expanded", show);
+  if (!show) return;
+  colors.classList.remove("flip");
+  if (colors.getBoundingClientRect().right > window.innerWidth - 6) colors.classList.add("flip");
+}
+
+function closeFindMenu(restoreFocus = false) {
+  if (findMenu.hidden) return;
+  showFindColors(false);
+  findMenu.hidden = true;
+  if (restoreFocus && !$("find").hidden) $("query").focus({preventScroll: true});
+}
+
+findPalette.forEach((name, index) => {
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = "find-swatch";
+  swatch.title = name;
+  swatch.setAttribute("aria-label", "Add search highlighted " + name.toLowerCase());
+  swatch.style.background = "var(--pick-" + index + ")";
+  swatch.addEventListener("click", () => {
+    closeFindMenu();
+    addFindTerm("var(--pick-" + index + ")");
+  });
+  $("find-colors").insertBefore(swatch, $("find-more-colors"));
+});
+
 function matchLabel(query = $("query").value.trim()) {
   $("match-count").textContent = matches.length
     ? (currentMatch < 0 ? matches.length + " found" : (currentMatch + 1) + " / " + matches.length)
-    : query ? "No matches" : "";
+    : query || findTerms.length ? "No matches" : "";
   $("prev-match").disabled = $("next-match").disabled = matches.length === 0;
 }
 
@@ -1469,7 +1661,8 @@ function lockFind(locked) {
 }
 
 function closeFind({focus = true, clear = !findLocked} = {}) {
-  if ($("find").hidden && !$("query").value && !restoreFind && !findLocked) return;
+  closeFindMenu();
+  if ($("find").hidden && !$("query").value && !findTerms.length && !restoreFind && !findLocked) return;
   const position = readPosition();
   restoreFind = false;
   $("find").hidden = true;
@@ -1478,6 +1671,9 @@ function closeFind({focus = true, clear = !findLocked} = {}) {
   findTimer = 0;
   if (clear) {
     $("query").value = "";
+    findTerms.length = 0;
+    findTermsExpanded = false;
+    renderFindTerms();
     lockFind(false);
   }
   if (needsRefresh) refreshFind(false);
@@ -1676,6 +1872,67 @@ $("query").addEventListener("input", () => {
     refreshFind();
   }, 80);
 });
+$("query").addEventListener("contextmenu", event => {
+  event.preventDefault();
+  if (event.clientX || event.clientY) openFindMenu(event.clientX, event.clientY);
+  else openFindMenu();
+});
+$("menu-add-search").addEventListener("click", () => {
+  closeFindMenu();
+  addFindTerm();
+});
+$("menu-add-search").addEventListener("pointerenter", () => showFindColors(false));
+$("menu-add-search-color").addEventListener("pointerenter", () => showFindColors(true));
+$("menu-add-search-color").addEventListener("click", () => {
+  showFindColors(true);
+  $("find-colors").querySelector(".find-swatch")?.focus({preventScroll: true});
+});
+findMenu.addEventListener("keydown", event => {
+  const items = [$("menu-add-search"), $("menu-add-search-color")].filter(item => !item.disabled);
+  const index = items.indexOf(document.activeElement);
+  if (index >= 0 && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+    event.preventDefault();
+    items[(index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus({preventScroll: true});
+  } else if (event.key === "ArrowRight" && document.activeElement === $("menu-add-search-color")) {
+    event.preventDefault();
+    $("menu-add-search-color").click();
+  } else if (event.key === "ArrowLeft" && $("find-colors").contains(document.activeElement)) {
+    event.preventDefault();
+    showFindColors(false);
+    $("menu-add-search-color").focus({preventScroll: true});
+  }
+});
+$("find-more-colors").addEventListener("click", () => {
+  pendingColorText = $("query").value.trim();
+  closeFindMenu();
+  const picker = $("find-color");
+  picker.value = "#7f7f7f";
+  try { picker.showPicker(); } catch { picker.click(); }
+});
+$("find-color").addEventListener("change", event => {
+  if (!pendingColorText) return;
+  $("query").value = pendingColorText;
+  pendingColorText = "";
+  addFindTerm(event.target.value);
+});
+findMenu.addEventListener("contextmenu", event => event.preventDefault());
+$("find-more-terms").addEventListener("click", () => {
+  findTermsExpanded = !findTermsExpanded;
+  layoutFindTerms();
+});
+new ResizeObserver(() => {
+  if ($("find-terms").clientWidth !== findTermsWidth) layoutFindTerms();
+}).observe($("find-terms"));
+document.addEventListener("keydown", event => {
+  if (findMenu.hidden || !["Escape", "Tab"].includes(event.key)) return;
+  if (event.key === "Escape") event.preventDefault();
+  closeFindMenu(true);
+}, true);
+document.addEventListener("pointerdown", event => {
+  if (!findMenu.hidden && !findMenu.contains(event.target)) closeFindMenu();
+});
+window.addEventListener("resize", () => closeFindMenu());
+window.addEventListener("blur", () => closeFindMenu());
 $("query").addEventListener("keydown", event => {
   if (event.key !== "Enter") return;
   event.preventDefault();
