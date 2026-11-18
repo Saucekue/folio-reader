@@ -27,4 +27,4 @@ Folio supports unencrypted, reflowable EPUB 2 and EPUB 3 books. It uses the sele
 
 ## Build from source
 
-With Rust and a Windows linker available, run `cargo build --release --locked` in this folder. The released x64 binary was built with the `x86_64-pc-windows-gnullvm` Rust toolchain and its `rust-mingw` component. The release binary embeds the HTML, CSS, and JavaScript interface.
+With Rust and a Windows linker available, run `cargo build --release --locked` in this folder. The released x64 binary was built with the `x86_64-pc-windows-gnullvm` Rust toolchain and its `rust-mingw` component. The release binary embeds the HTML, CSS, and JavaScript interface. Pushing a new version in `Cargo.toml` to `main`, with release notes in `.github/release-notes/vX.Y.Z.md`, builds the portable ZIP and publishes the release through GitHub Actions.

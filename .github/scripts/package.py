@@ -50,12 +50,9 @@ def rust_notices():
                        if path.is_file() and path.name.lower().startswith(("license", "copying")))
         if not files:
             sys.exit(f"No license file found for {crate['name']} {crate['version']}")
-        texts = []
-        for path in files:
-            text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-            texts.append(path.name + "\n" + (text if text.endswith("\n") else text + "\n"))
+        texts = [path.name + "\n" + path.read_text(encoding="utf-8").replace("\r\n", "\n") for path in files]
         blocks.append(f"{crate['name']}-{crate['version']}\n" + "\n".join(texts))
-    return "\n".join(blocks)
+    return "\n\n".join(blocks)
 
 
 def find(name):
