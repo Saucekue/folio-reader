@@ -1,0 +1,76 @@
+name: Release
+
+# Publishes "Folio Reader vX.Y.Z" whenever main has a Cargo.toml version without a release yet.
+# Release notes come from .github/release-notes/vX.Y.Z.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WEBVIEW2_VERSION: 1.0.4314.35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "Folio Reader v$version is already released."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          elif [ ! -f ".github/release-notes/v$version.md" ]; then
+            echo "::error::Add .github/release-notes/v$version.md to release v$version."
+            exit 1
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust
+        if: steps.version.outputs.needed == 'true'
+        shell: bash
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnullvm --profile minimal --component rust-mingw
+          rustup default stable-x86_64-pc-windows-gnullvm
+          rustc --version --verbose
+
+      - name: Build
+        if: steps.version.outputs.needed == 'true'
+        shell: bash
+        run: cargo build --release --locked
+
+      - name: Get WebView2 loader
+        if: steps.version.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/$env:WEBVIEW2_VERSION" -OutFile webview2.zip
+          Expand-Archive webview2.zip -DestinationPath webview2
+
+      - name: Package
+        if: steps.version.outputs.needed == 'true'
+        shell: bash
+        run: python .github/scripts/package.py "${{ steps.version.outputs.version }}" webview2 dist
+
+      - name: Publish release
+        if: steps.version.outputs.needed == 'true'
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          gh release create "v$version" dist/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "Folio Reader v$version" \
+            --notes-file ".github/release-notes/v$version.md" \
+            --latest
